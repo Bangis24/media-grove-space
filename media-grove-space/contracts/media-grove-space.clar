@@ -424,4 +424,169 @@
     (
       (claim-data (unwrap! (map-get? copyright-claims { claim-id: claim-id }) ERR-INVALID-LICENSE-STATUS))
     )
-    (asserts! (
+    (asserts! (var-get contract-active) ERR-UNAUTHORIZED)
+    (asserts! (or (is-contract-owner) (is-eq tx-sender (get initiator claim-data))) ERR-UNAUTHORIZED)
+    (asserts! (is-eq (get status claim-data) "ACTIVE") ERR-INVALID-LICENSE-STATUS)
+    
+    (map-set copyright-claims
+      { claim-id: claim-id }
+      (merge claim-data { status: resolution-status })
+    )
+    (ok true)
+  )
+)
+
+(define-public (update-creativity-score (creator principal) (new-score uint))
+  (begin
+    (asserts! (is-contract-owner) ERR-UNAUTHORIZED)
+    (asserts! (is-some (map-get? creators { creator-address: creator })) ERR-INVALID-CREATOR)
+    (asserts! (<= new-score u100) ERR-INVALID-CREATIVITY-SCORE)
+    
+    (map-set creators
+      { creator-address: creator }
+      (merge
+        (unwrap! (map-get? creators { creator-address: creator }) ERR-INVALID-CREATOR)
+        { creativity-score: new-score }
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Read-only Functions
+(define-read-only (get-content-info (content-id (string-ascii 64)))
+  (map-get? creative-content { content-id: content-id })
+)
+
+(define-read-only (get-claim-info (claim-id uint))
+  (map-get? copyright-claims { claim-id: claim-id })
+)
+
+(define-read-only (get-creator-info (creator principal))
+  (map-get? creators { creator-address: creator })
+)
+
+(define-read-only (get-contract-stats)
+  {
+    total-claims: (var-get total-copyright-claims),
+    active: (var-get contract-active),
+    ai-version: (var-get ai-model-version)
+  }
+)
+
+(define-read-only (check-content-copyrighted (content-id (string-ascii 64)))
+  (match (map-get? creative-content { content-id: content-id })
+    content-data (get is-copyrighted content-data)
+    false
+  )
+)
+
+(define-read-only (get-creator-reputation (creator principal))
+  (match (map-get? creators { creator-address: creator })
+    creator-data (get reputation-score creator-data)
+    u0
+  )
+)
+
+(define-read-only (is-creator-suspended (creator principal))
+  (match (map-get? creators { creator-address: creator })
+    creator-data 
+    (if (get is-suspended creator-data)
+      (match (get suspension-end creator-data)
+        end-block (< block-height end-block)
+        true
+      )
+      false
+    )
+    false
+  )
+)
+
+(define-read-only (get-creator-creativity-score (creator principal))
+  (match (map-get? creators { creator-address: creator })
+    creator-data (get creativity-score creator-data)
+    u0
+  )
+)
+
+(define-read-only (get-similarity-pattern (pattern-id (string-ascii 64)))
+  (map-get? similarity-patterns { pattern-id: pattern-id })
+)
+
+;; License and Monetization Functions
+(define-public (grant-content-license (content-id (string-ascii 64)) (licensee principal) (license-type (string-ascii 32)))
+  (let
+    (
+      (content-data (unwrap! (map-get? creative-content { content-id: content-id }) ERR-INVALID-CONTENT))
+    )
+    (asserts! (var-get contract-active) ERR-UNAUTHORIZED)
+    (asserts! (is-eq tx-sender (get creator content-data)) ERR-UNAUTHORIZED)
+    (asserts! (get authenticity-verified content-data) ERR-AUDIT-REQUIRED)
+    
+    ;; Reward royalty tokens to creator
+    (reward-royalty-tokens tx-sender)
+    
+    (ok true)
+  )
+)
+
+(define-public (report-similarity (original-content (string-ascii 64)) (suspected-content (string-ascii 64)) (similarity-score uint))
+  (begin
+    (asserts! (var-get contract-active) ERR-UNAUTHORIZED)
+    (asserts! (is-authorized-creator tx-sender) ERR-CREATOR-SUSPENDED)
+    (asserts! (is-valid-content original-content) ERR-INVALID-CONTENT)
+    (asserts! (is-valid-content suspected-content) ERR-INVALID-CONTENT)
+    (asserts! (>= similarity-score SIMILARITY-THRESHOLD) ERR-SIMILARITY-THRESHOLD)
+    
+    ;; Reward transparency for reporting
+    (reward-royalty-tokens tx-sender)
+    
+    (ok true)
+  )
+)
+
+;; Emergency Functions
+(define-public (emergency-pause)
+  (begin
+    (asserts! (is-contract-owner) ERR-UNAUTHORIZED)
+    (var-set contract-active false)
+    (ok true)
+  )
+)
+
+(define-public (emergency-resume)
+  (begin
+    (asserts! (is-contract-owner) ERR-UNAUTHORIZED)
+    (var-set contract-active true)
+    (ok true)
+  )
+)
+
+;; Governance Functions
+(define-public (submit-governance-proposal (proposal-id uint) (proposal-type (string-ascii 32)))
+  (begin
+    (asserts! (var-get contract-active) ERR-UNAUTHORIZED)
+    (asserts! (is-authorized-creator tx-sender) ERR-CREATOR-SUSPENDED)
+    
+    ;; Basic proposal submission logic
+    (ok true)
+  )
+)
+
+(define-public (cast-governance-vote (proposal-id uint) (vote bool) (weight uint))
+  (begin
+    (asserts! (var-get contract-active) ERR-UNAUTHORIZED)
+    (asserts! (is-authorized-creator tx-sender) ERR-CREATOR-SUSPENDED)
+    
+    (map-set governance-votes
+      { proposal-id: proposal-id, voter: tx-sender }
+      {
+        vote: vote,
+        timestamp: block-height,
+        weight: weight
+      }
+    )
+    
+    (ok true)
+  )
+)
